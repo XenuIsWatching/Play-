@@ -482,8 +482,7 @@ bool retro_load_game(const retro_game_info* info)
 
 	if(m_virtualMachine == nullptr)
 	{
-		//retro_init did not complete. Refusing here is what turns that into a
-		//frontend-visible load failure rather than a crash further in.
+		//retro_init did not complete.
 		CLog::GetInstance().Print(LOG_NAME, "Cannot load game, initialization failed.\n");
 		return false;
 	}
@@ -555,12 +554,10 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 
 #ifdef __ANDROID__
 
-//Where our data goes is the frontend's decision to make, not ours: it is what
-//RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY is for, and a directory it names is one it
-//can be expected to manage and to have made writable. EXTERNAL_STORAGE is only
-//consulted for frontends that answer neither query. It points at /sdcard, which an
-//app without MANAGE_EXTERNAL_STORAGE cannot create a directory in under scoped
-//storage, and creating "Play Data Files" there throws straight out of retro_init.
+//A directory the frontend names is one it manages and has made writable.
+//EXTERNAL_STORAGE is the fallback for frontends that answer neither query: it points
+//at /sdcard, where an app without MANAGE_EXTERNAL_STORAGE cannot create a directory
+//under scoped storage.
 static void SetupAndroidDataDirPath()
 {
 	static const unsigned int c_frontendDirs[] = {
@@ -616,10 +613,9 @@ static void InitImpl()
 
 void retro_init()
 {
-	//Nothing above us catches: an exception leaving a libretro entry point reaches
-	//std::terminate and aborts the frontend, taking the whole application down with
-	//it. retro_init cannot report failure, so record it by leaving the virtual
-	//machine null and refuse to load content instead.
+	//An exception leaving a libretro entry point reaches std::terminate and aborts
+	//the frontend. retro_init cannot report failure, so a failed one leaves the
+	//virtual machine null and retro_load_game refuses.
 	try
 	{
 		InitImpl();
