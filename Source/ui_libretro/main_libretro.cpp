@@ -555,31 +555,14 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 
 #ifdef __ANDROID__
 
-//Can "Play Data Files" be created under this base path? Answered without throwing,
-//so an unusable location can be rejected rather than terminating the process.
-static bool IsUsableDataDirPath(const char* basePath)
-{
-	if((basePath == nullptr) || (*basePath == '\0')) return false;
-	std::error_code errorCode;
-	auto dataPath = fs::path(basePath) / "Play Data Files";
-	if(fs::is_directory(dataPath, errorCode)) return true;
-	fs::create_directories(dataPath, errorCode);
-	return !static_cast<bool>(errorCode);
-}
-
-//EXTERNAL_STORAGE points at /sdcard, which an app without MANAGE_EXTERNAL_STORAGE
-//cannot create a directory in under scoped storage. Keep using it while it works,
-//so existing installs keep their data where they left it, and otherwise fall back
-//to the directories the frontend hands us, which are writable by definition.
+//Where our data goes is the frontend's decision to make, not ours: it is what
+//RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY is for, and a directory it names is one it
+//can be expected to manage and to have made writable. EXTERNAL_STORAGE is only
+//consulted for frontends that answer neither query. It points at /sdcard, which an
+//app without MANAGE_EXTERNAL_STORAGE cannot create a directory in under scoped
+//storage, and creating "Play Data Files" there throws straight out of retro_init.
 static void SetupAndroidDataDirPath()
 {
-	const char* externalStorage = getenv("EXTERNAL_STORAGE");
-	if(IsUsableDataDirPath(externalStorage))
-	{
-		Framework::PathUtils::SetFilesDirPath(externalStorage);
-		return;
-	}
-
 	static const unsigned int c_frontendDirs[] = {
 	    RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
 	    RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
@@ -588,14 +571,21 @@ static void SetupAndroidDataDirPath()
 	{
 		const char* dirPath = nullptr;
 		if(!g_environ_cb(dirEnvCmd, &dirPath)) continue;
-		if(!IsUsableDataDirPath(dirPath)) continue;
+		if((dirPath == nullptr) || (*dirPath == '\0')) continue;
 		Framework::PathUtils::SetFilesDirPath(dirPath);
 		return;
 	}
 
-	//Nothing writable was offered. Leave the path empty rather than assigning from a
-	//null pointer, and let the failure surface as a caught exception below.
-	CLog::GetInstance().Print(LOG_NAME, "No writable data directory available.\n");
+	const char* externalStorage = getenv("EXTERNAL_STORAGE");
+	if((externalStorage != nullptr) && (*externalStorage != '\0'))
+	{
+		//fs::path has no constructor taking a null pointer, so this is guarded
+		//rather than passed straight through.
+		Framework::PathUtils::SetFilesDirPath(externalStorage);
+		return;
+	}
+
+	CLog::GetInstance().Print(LOG_NAME, "No data directory available.\n");
 }
 
 #endif
