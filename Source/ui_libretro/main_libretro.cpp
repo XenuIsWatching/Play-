@@ -19,6 +19,7 @@
 
 #include <vector>
 #include <cstdlib>
+#include <exception>
 
 #define LOG_NAME "LIBRETRO"
 
@@ -479,6 +480,14 @@ bool retro_load_game(const retro_game_info* info)
 {
 	CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
 
+	if(m_virtualMachine == nullptr)
+	{
+		//retro_init did not complete. Refusing here is what turns that into a
+		//frontend-visible load failure rather than a crash further in.
+		CLog::GetInstance().Print(LOG_NAME, "Cannot load game, initialization failed.\n");
+		return false;
+	}
+
 #if defined(IOS)
 	bool can_jit = false;
 	if(g_environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &can_jit) && !can_jit)
@@ -544,10 +553,57 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info* i
 	return false;
 }
 
-void retro_init()
+#ifdef __ANDROID__
+
+//Can "Play Data Files" be created under this base path? Answered without throwing,
+//so an unusable location can be rejected rather than terminating the process.
+static bool IsUsableDataDirPath(const char* basePath)
+{
+	if((basePath == nullptr) || (*basePath == '\0')) return false;
+	std::error_code errorCode;
+	auto dataPath = fs::path(basePath) / "Play Data Files";
+	if(fs::is_directory(dataPath, errorCode)) return true;
+	fs::create_directories(dataPath, errorCode);
+	return !static_cast<bool>(errorCode);
+}
+
+//EXTERNAL_STORAGE points at /sdcard, which an app without MANAGE_EXTERNAL_STORAGE
+//cannot create a directory in under scoped storage. Keep using it while it works,
+//so existing installs keep their data where they left it, and otherwise fall back
+//to the directories the frontend hands us, which are writable by definition.
+static void SetupAndroidDataDirPath()
+{
+	const char* externalStorage = getenv("EXTERNAL_STORAGE");
+	if(IsUsableDataDirPath(externalStorage))
+	{
+		Framework::PathUtils::SetFilesDirPath(externalStorage);
+		return;
+	}
+
+	static const unsigned int c_frontendDirs[] = {
+	    RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY,
+	    RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY,
+	};
+	for(auto dirEnvCmd : c_frontendDirs)
+	{
+		const char* dirPath = nullptr;
+		if(!g_environ_cb(dirEnvCmd, &dirPath)) continue;
+		if(!IsUsableDataDirPath(dirPath)) continue;
+		Framework::PathUtils::SetFilesDirPath(dirPath);
+		return;
+	}
+
+	//Nothing writable was offered. Leave the path empty rather than assigning from a
+	//null pointer, and let the failure surface as a caught exception below.
+	CLog::GetInstance().Print(LOG_NAME, "No writable data directory available.\n");
+}
+
+#endif
+
+static void InitImpl()
 {
 #ifdef __ANDROID__
-	Framework::PathUtils::SetFilesDirPath(getenv("EXTERNAL_STORAGE"));
+	SetupAndroidDataDirPath();
 #endif
 	CLog::GetInstance().Print(LOG_NAME, "%s\n", __FUNCTION__);
 
@@ -566,6 +622,23 @@ void retro_init()
 	SetupInputHandler();
 	SetupSoundHandler();
 	first_run = false;
+}
+
+void retro_init()
+{
+	//Nothing above us catches: an exception leaving a libretro entry point reaches
+	//std::terminate and aborts the frontend, taking the whole application down with
+	//it. retro_init cannot report failure, so record it by leaving the virtual
+	//machine null and refuse to load content instead.
+	try
+	{
+		InitImpl();
+	}
+	catch(const std::exception& exception)
+	{
+		CLog::GetInstance().Print(LOG_NAME, "retro_init failed: %s\n", exception.what());
+		m_virtualMachine = nullptr;
+	}
 }
 
 void retro_deinit()
