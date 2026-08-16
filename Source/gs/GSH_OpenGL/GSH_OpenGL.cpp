@@ -1690,6 +1690,18 @@ void CGSH_OpenGL::Prim_Sprite()
 	    rgbaq[1].nR, rgbaq[1].nG,
 	    rgbaq[1].nB, rgbaq[1].nA);
 
+	//A sprite covers the pixels the GS would sample, which it does at each pixel's
+	//top-left corner: pixel n is inside [x1, x2) when x1 <= n < x2. OpenGL samples at
+	//the centre instead, so the same quad has to span whole pixels [ceil(x1),
+	//ceil(x2)] to cover the same set. Games blit a framebuffer as sprites that stop
+	//half a pixel short of the next one (0..63.5, 64..127.5, and so on); left
+	//unsnapped, the last pixel of each falls between the two and is never drawn,
+	//which is the column of black seams down the picture.
+	nX1 = std::ceil(nX1);
+	nX2 = std::ceil(nX2);
+	nY1 = std::ceil(nY1);
+	nY2 = std::ceil(nY2);
+
 	// clang-format off
 	PRIM_VERTEX vertices[] =
 	{
